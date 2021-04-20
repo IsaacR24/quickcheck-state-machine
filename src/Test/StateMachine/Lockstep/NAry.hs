@@ -24,7 +24,6 @@ module Test.StateMachine.Lockstep.NAry (
   , Resp
   , RealHandles
   , MockHandle
-  , RealMonad
   , Test
     -- * Test term-level parameters
   , StateMachineTest(..)
@@ -46,9 +45,9 @@ import           Data.Kind
                    (Type)
 import           Data.Maybe
                    (fromJust)
+import           Data.SOP
 import           Data.Semigroup                       hiding
                    (All)
-import           Data.SOP
 import           Data.Typeable
 import           GHC.Generics
                    (Generic)
@@ -68,12 +67,19 @@ import           Test.StateMachine.Lockstep.Auxiliary
   Test type-level parameters
 -------------------------------------------------------------------------------}
 
+-- | @t@ is the type paramater for for a given test; e.g.: @data YourTest@
 type family MockState   t   :: Type
 data family Cmd         t   :: (Type -> Type) -> [Type] -> Type
+-- ^ Cmd :: Cmd t f ts
+-- ts is the list of RealHandles
+-- @(f t)@ is the handle for each @t@ in @ts@
 data family Resp        t   :: (Type -> Type) -> [Type] -> Type
+-- ^ Resp :: Resp t f ts
+-- ts is the list of RealHandles
+-- @(f t)@ is the handle for each @t@ in @ts@
 type family RealHandles t   :: [Type]
 data family MockHandle  t a :: Type
-type family RealMonad   t   :: Type -> Type
+-- ^ MockHandle takes a RealHandle @a@ and returns the corresponding MockHandle
 
 {-------------------------------------------------------------------------------
   Reference environments
@@ -134,8 +140,11 @@ type family Test (f :: (Type -> Type) -> [Type] -> Type) :: Type where
 newtype FlipRef r h = FlipRef { unFlipRef :: Reference h r }
   deriving stock (Show)
 
--- @f@ will be instantiated with @Cmd@ or @Resp@
--- @r@ will be instantiated with 'Symbolic' or 'Concrete'
+
+-- NOTE: this comment not showing up on Haddock
+{- | @f@ will be instantiated with @Cmd@ or @Resp@
+@r@ will be instantiated with 'Symbolic' or 'Concrete'
+-}
 newtype At f r = At { unAt :: f (FlipRef r) (RealHandles (Test f)) }
 type    f :@ r = At f r
 
@@ -162,15 +171,15 @@ instance ( ToExpr (MockState t)
          , All (And ToExpr (Compose ToExpr (MockHandle t))) (RealHandles t)
          ) => ToExpr (Model t Concrete)
 
-initModel :: StateMachineTest t -> Model t r
+initModel :: StateMachineTest t m -> Model t r
 initModel StateMachineTest{..} = Model initMock (Refss (hpure (Refs [])))
 
 {-------------------------------------------------------------------------------
   High level API
 -------------------------------------------------------------------------------}
 
-data StateMachineTest t =
-    ( Monad (RealMonad t)
+data StateMachineTest t m =
+    ( Monad m
     -- Requirements on the handles
     , All Typeable                                     (RealHandles t)
     , All Eq                                           (RealHandles t)
@@ -191,17 +200,17 @@ data StateMachineTest t =
     , ToExpr (MockState t)
     ) => StateMachineTest {
       runMock    :: Cmd t (MockHandle t) (RealHandles t) -> MockState t -> (Resp t (MockHandle t) (RealHandles t), MockState t)
-    , runReal    :: Cmd t I              (RealHandles t) -> RealMonad t (Resp t I (RealHandles t))
+    , runReal    :: Cmd t I              (RealHandles t) -> m (Resp t I (RealHandles t))
     , initMock   :: MockState t
     , newHandles :: forall f. Resp t f (RealHandles t) -> NP ([] :.: f) (RealHandles t)
     , generator  :: Model t Symbolic -> Maybe (Gen (Cmd t :@ Symbolic))
     , shrinker   :: Model t Symbolic -> Cmd t :@ Symbolic -> [Cmd t :@ Symbolic]
-    , cleanup    :: Model t Concrete -> RealMonad t ()
+    , cleanup    :: Model t Concrete -> m ()
     }
 
-semantics :: StateMachineTest t
+semantics :: StateMachineTest t m
           -> Cmd t :@ Concrete
-          -> RealMonad t (Resp t :@ Concrete)
+          -> m (Resp t :@ Concrete)
 semantics StateMachineTest{..} (At c) =
     (At . ncfmap (Proxy @Typeable) (const wrapConcrete)) <$>
       runReal (nfmap (const unwrapConcrete) c)
@@ -232,7 +241,7 @@ toMockHandles rss (At fr) =
     find refss ix r = unRefs (npAt refss ix) ! r
 
 step :: Eq1 r
-     => StateMachineTest t
+     => StateMachineTest t m
      -> Model t r
      -> Cmd t :@ r
      -> (Resp t (MockHandle t) (RealHandles t), MockState t)
@@ -246,8 +255,8 @@ data Event t r = Event {
     , mockResp :: Resp t (MockHandle t) (RealHandles t)
     }
 
-lockstep :: forall t r. Eq1 r
-         => StateMachineTest t
+lockstep :: forall t r m. Eq1 r
+         => StateMachineTest t m
          -> Model t    r
          -> Cmd   t :@ r
          -> Resp  t :@ r
@@ -265,14 +274,14 @@ lockstep sm@StateMachineTest{..} m@(Model _ rss) c (At resp) = Event {
     rss' = zipHandles (newHandles resp) (newHandles resp')
 
 transition :: Eq1 r
-           => StateMachineTest t
+           => StateMachineTest t m
            -> Model t    r
            -> Cmd   t :@ r
            -> Resp  t :@ r
            -> Model t    r
 transition sm m c = after . lockstep sm m c
 
-postcondition :: StateMachineTest t
+postcondition :: StateMachineTest t m
               -> Model t    Concrete
               -> Cmd   t :@ Concrete
               -> Resp  t :@ Concrete
@@ -282,7 +291,7 @@ postcondition sm@StateMachineTest{} m c r =
   where
     e = lockstep sm m c r
 
-symbolicResp :: StateMachineTest t
+symbolicResp :: StateMachineTest t m
              -> Model t Symbolic
              -> Cmd t :@ Symbolic
              -> GenSym (Resp t :@ Symbolic)
@@ -305,8 +314,8 @@ precondition (Model _ (Refss hs)) (At c) =
     sameRef :: Reference a Symbolic -> Reference a Symbolic -> Bool
     sameRef (QSM.Reference (QSM.Symbolic v)) (QSM.Reference (QSM.Symbolic v')) = v == v'
 
-toStateMachine :: StateMachineTest t
-               -> StateMachine (Model t) (At (Cmd t)) (RealMonad t) (At (Resp t))
+toStateMachine :: StateMachineTest t m
+               -> StateMachine (Model t) (At (Cmd t)) m (At (Resp t))
 toStateMachine sm@StateMachineTest{} = StateMachine {
       initModel     = initModel     sm
     , transition    = transition    sm
@@ -320,8 +329,8 @@ toStateMachine sm@StateMachineTest{} = StateMachine {
     , invariant     = Nothing
     }
 
-prop_sequential :: RealMonad t ~ IO
-                => StateMachineTest t
+prop_sequential :: m ~ IO
+                => StateMachineTest t m
                 -> Maybe Int   -- ^ (Optional) minimum number of commands
                 -> Property
 prop_sequential sm@StateMachineTest{} mMinSize =
@@ -333,8 +342,8 @@ prop_sequential sm@StateMachineTest{} mMinSize =
   where
     sm' = toStateMachine sm
 
-prop_parallel :: RealMonad t ~ IO
-              => StateMachineTest t
+prop_parallel :: m ~ IO
+              => StateMachineTest t m
               -> Maybe Int   -- ^ (Optional) minimum number of commands
               -> Property
 prop_parallel sm@StateMachineTest{} mMinSize =
