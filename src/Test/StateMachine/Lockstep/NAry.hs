@@ -7,7 +7,7 @@
 {-# LANGUAGE GADTs                      #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE InstanceSigs               #-}
-{-# LANGUAGE KindSignatures             #-}
+
 {-# LANGUAGE RankNTypes                 #-}
 {-# LANGUAGE RecordWildCards            #-}
 {-# LANGUAGE ScopedTypeVariables        #-}
@@ -44,7 +44,7 @@ import           Data.Functor.Classes
 import           Data.Kind
                    (Type)
 import           Data.Maybe
-                   (fromJust)
+                   (fromMaybe)
 import           Data.SOP
 import           Data.Semigroup                       hiding
                    (All)
@@ -61,8 +61,9 @@ import qualified Data.TreeDiff                        as TD
 import qualified Test.StateMachine.Types              as QSM
 import qualified Test.StateMachine.Types.Rank2        as Rank2
 
+import           GHC.Stack
+                   (HasCallStack)
 import           Test.StateMachine.Lockstep.Auxiliary
-
 {-------------------------------------------------------------------------------
   Test type-level parameters
 -------------------------------------------------------------------------------}
@@ -120,7 +121,7 @@ instance All (And ToExpr (Compose ToExpr (MockHandle t))) (RealHandles t)
          . unRefss
     where
       toExprOne :: (ToExpr a, ToExpr (MockHandle t a))
-                => Refs t Concrete a -> K (TD.Expr) a
+                => Refs t Concrete a -> K TD.Expr a
       toExprOne = K . toExpr
 
 instance SListI (RealHandles t) => Semigroup (Refss t r) where
@@ -212,7 +213,7 @@ semantics :: StateMachineTest t m
           -> Cmd t :@ Concrete
           -> m (Resp t :@ Concrete)
 semantics StateMachineTest{..} (At c) =
-    (At . ncfmap (Proxy @Typeable) (const wrapConcrete)) <$>
+    At . ncfmap (Proxy @Typeable) (const wrapConcrete) <$>
       runReal (nfmap (const unwrapConcrete) c)
 
 unwrapConcrete :: FlipRef Concrete a -> I a
@@ -308,7 +309,7 @@ precondition (Model _ (Refss hs)) (At c) =
     Boolean (M.getAll $ nfoldMap check c) .// "No undefined handles"
   where
     check :: Elem (RealHandles t) a -> FlipRef Symbolic a -> M.All
-    check ix (FlipRef a) = M.All $ any (sameRef a) $ map fst (unRefs (hs `npAt` ix))
+    check ix (FlipRef a) = M.All $ any ((sameRef a) . fst) (unRefs (hs `npAt` ix))
 
     -- TODO: Patch QSM
     sameRef :: Reference a Symbolic -> Reference a Symbolic -> Bool
@@ -412,8 +413,9 @@ instance (NTraversable (Resp t), SListI (RealHandles t))
   Auxiliary
 -------------------------------------------------------------------------------}
 
-(!) :: Eq k => [(k, a)] -> k -> a
-env ! r = fromJust (lookup r env)
+(!) :: (Eq k, HasCallStack) => [(k, a)] -> k -> a
+env ! r = fromMaybe (error "! lookup failed") (lookup r env)
+
 
 zipHandles :: SListI (RealHandles t)
            => NP ([] :.: FlipRef r)    (RealHandles t)

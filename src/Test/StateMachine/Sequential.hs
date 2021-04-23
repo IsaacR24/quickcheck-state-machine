@@ -55,9 +55,10 @@ module Test.StateMachine.Sequential
   where
 
 import           Control.Exception
-                   (SomeException, SomeAsyncException (..), displayException,
-                   fromException)
-import           Control.Monad (when)
+                   (SomeAsyncException(..), SomeException,
+                   displayException, fromException)
+import           Control.Monad
+                   (when)
 import           Control.Monad.Catch
                    (MonadCatch, MonadMask, catch, mask, onException)
 import           Control.Monad.State.Strict
@@ -80,7 +81,7 @@ import           Data.Proxy
                    (Proxy(..))
 import qualified Data.Set                          as S
 import           Data.Time
-                    (defaultTimeLocale, formatTime, getZonedTime)
+                   (defaultTimeLocale, formatTime, getZonedTime)
 import           Data.TreeDiff
                    (ToExpr, ansiWlBgEditExprCompact, ediff)
 import           Prelude
@@ -107,7 +108,8 @@ import           Text.Show.Pretty
 import           UnliftIO
                    (MonadIO, TChan, atomically, liftIO, newTChanIO,
                    tryReadTChan, writeTChan)
-import           UnliftIO.Exception (throwIO)
+import           UnliftIO.Exception
+                   (throwIO)
 
 import           Test.StateMachine.ConstructorName
 import           Test.StateMachine.Labelling
@@ -377,7 +379,7 @@ executeCommands StateMachine {..} hchan pid check =
   go . unCommands
   where
     go []                           = return Ok
-    go (Command scmd _ vars : cmds) = do
+    go ((Command scmd _ vars) : cmds) = do
       (env, smodel, counter, cmodel) <- get
       case (check, logic (precondition smodel scmd)) of
         (CheckPrecondition, VFalse ce) -> return (PreconditionFailed (show ce))
