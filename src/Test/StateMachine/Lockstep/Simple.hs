@@ -38,7 +38,11 @@ import           Data.Bifunctor
 import           Data.Functor.Classes
 import           Data.Kind
                    (Type)
+import           Data.Map
+                   (Map)
+import qualified Data.Map                             as Map
 import           Data.SOP
+import qualified Data.Set                             as Set
 import           Data.Typeable
 import           Prelude
 import           Test.QuickCheck
@@ -83,7 +87,7 @@ data Model t r = Model {
 modelToSimple :: NAry.Model (Simple t) r -> Model t r
 modelToSimple NAry.Model{modelRefss = NAry.Refss (NAry.Refs rs :* Nil), ..} = Model {
       modelState = modelState
-    , modelRefs  = map (second unSimpleToMock) rs
+    , modelRefs  = map (second unSimpleToMock) undefined -- rs
     }
 
 {-------------------------------------------------------------------------------
@@ -212,7 +216,7 @@ instance ToExpr (MockHandle t)
   toExpr (SimpleToMock h) = toExpr h
 
 fromSimple :: StateMachineTest t -> NAry.StateMachineTest (Simple t) IO
-fromSimple StateMachineTest{..} = NAry.StateMachineTest {
+fromSimple StateMachineTest{..} = undefined {-NAry.StateMachineTest {
       runMock    = \cmd st -> first respMockFromSimple (runMock (cmdMockToSimple cmd) st)
     , runReal    = \cmd -> respRealFromSimple <$> (runReal (cmdRealToSimple cmd))
     , initMock   = initMock
@@ -220,7 +224,7 @@ fromSimple StateMachineTest{..} = NAry.StateMachineTest {
     , generator  = \m     -> fmap cmdAtFromSimple <$> generator (modelToSimple m)
     , shrinker   = \m cmd ->      cmdAtFromSimple <$> shrinker  (modelToSimple m) (cmdAtToSimple cmd)
     , cleanup    = cleanup   . modelToSimple
-    }
+    }-}
 
 {-------------------------------------------------------------------------------
   Running the tests
@@ -229,9 +233,9 @@ fromSimple StateMachineTest{..} = NAry.StateMachineTest {
 prop_sequential :: StateMachineTest t
                 -> Maybe Int   -- ^ (Optional) minimum number of commands
                 -> Property
-prop_sequential = NAry.prop_sequential . fromSimple
+prop_sequential = undefined -- NAry.prop_sequential . fromSimple
 
 prop_parallel :: StateMachineTest t
               -> Maybe Int   -- ^ (Optional) minimum number of commands
               -> Property
-prop_parallel = NAry.prop_parallel . fromSimple
+prop_parallel = undefined -- NAry.prop_parallel . fromSimple
