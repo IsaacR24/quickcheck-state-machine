@@ -17,6 +17,7 @@
 {-# LANGUAGE TypeOperators              #-}
 {-# LANGUAGE UndecidableInstances       #-}
 
+{-# LANGUAGE PolyKinds                  #-}
 module Test.StateMachine.Lockstep.NAry (
     -- * Test type-level parameters
     MockState
@@ -44,8 +45,6 @@ module Test.StateMachine.Lockstep.NAry (
 import           Data.Functor.Classes
 import           Data.Kind
                    (Type)
-import           Data.Maybe
-                   (fromMaybe)
 import           Data.SOP
 import           Data.Semigroup                       hiding
                    (All)
@@ -96,7 +95,16 @@ newtype MockHandles t a = MockHandles { unMH :: Set (MockHandle t a) }
 
 -- | Relation between real and mock references for single handle type @a@
 newtype Refs t r a = Refs { unRefs :: Map (Reference a r) (MockHandles t a) }
-  deriving newtype (Semigroup, Monoid)
+  -- deriving newtype (Monoid)
+
+instance (Ord1 r, Ord a, Ord (MockHandle t a)) => Monoid (Refs t r a) where
+  mempty = Refs Map.empty
+-- TODO: write semigroup instance
+instance (Ord1 r, Ord a, Ord (MockHandle t a)) => Semigroup (Refs t r a) where
+  (Refs r1) <> (Refs r2) = Refs $ Map.unionWith
+    (\a1 a2 -> MockHandles $ unMH a1 <> unMH a2)
+    r1
+    r2
 
 deriving stock instance Generic (Refs t r a)
 
@@ -134,11 +142,23 @@ instance All (And ToExpr (Compose ToExpr (MockHandles t))) (RealHandles t)
                 => Refs t Concrete a -> K TD.Expr a
       toExprOne = K . toExpr
 
-instance (SListI (RealHandles t), All Ord (RealHandles t), Ord1 r)
+instance ( SListI (RealHandles t)
+         , All Ord (RealHandles t)
+         , Ord1 r
+         , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+         )
   => Semigroup (Refss t r) where
-  Refss rss <> Refss rss' = Refss $ hcliftA2 (Proxy @Ord ) (<>) rss rss'
+  Refss rss <> Refss rss' = Refss $ hcliftA2 p (<>) rss rss'
+    where
+      p :: Proxy (And Ord (Compose Ord (MockHandle t)))
+      p = Proxy
 
-instance (SListI (RealHandles t), All Ord (RealHandles t), Ord1 r)
+instance ( SListI (RealHandles t)
+         , All Ord (RealHandles t)
+         , Ord1 r
+         , All (And Ord (Compose Ord (MockHandles t))) (RealHandles t)
+         , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+         )
   => Monoid (Refss t r) where
   mempty = Refss $ hpure (Refs Map.empty)
 
@@ -273,6 +293,7 @@ data Event t r = Event {
 lockstep :: forall t r m
          . ( Ord1 r
            , All Ord (RealHandles t)
+           , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
            )
          => StateMachineTest t m
          -> Model t    r
@@ -293,6 +314,7 @@ lockstep sm@StateMachineTest{..} m@(Model _ rss) c (At resp) = Event {
 
 transition :: ( Ord1 r
               , All Ord (RealHandles t)
+              , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
               )
            => StateMachineTest t m
            -> Model t    r
@@ -301,7 +323,9 @@ transition :: ( Ord1 r
            -> Model t    r
 transition sm m c = after . lockstep sm m c
 
-postcondition :: All Ord (RealHandles t)
+postcondition :: ( All Ord (RealHandles t)
+                 , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                 )
               => StateMachineTest t m
               -> Model t    Concrete
               -> Cmd   t :@ Concrete
@@ -336,7 +360,9 @@ precondition (Model _ (Refss hs)) (At c) =
     sameRef :: Reference a Symbolic -> Reference a Symbolic -> Bool
     sameRef (QSM.Reference (QSM.Symbolic v)) (QSM.Reference (QSM.Symbolic v')) = v == v'
 
-toStateMachine :: All Ord (RealHandles t)
+toStateMachine :: ( All Ord (RealHandles t)
+                  , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                  )
                => StateMachineTest t m
                -> StateMachine (Model t) (At (Cmd t)) m (At (Resp t))
 toStateMachine sm@StateMachineTest{} = StateMachine {
@@ -352,7 +378,9 @@ toStateMachine sm@StateMachineTest{} = StateMachine {
     , invariant     = Nothing
     }
 
-prop_sequential :: All Ord (RealHandles t)
+prop_sequential :: ( All Ord (RealHandles t)
+                   , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                   )
                 => m ~ IO
                 => StateMachineTest t m
                 -> Maybe Int   -- ^ (Optional) minimum number of commands
@@ -366,7 +394,9 @@ prop_sequential sm@StateMachineTest{} mMinSize =
   where
     sm' = toStateMachine sm
 
-prop_parallel :: All Ord (RealHandles t)
+prop_parallel :: ( All Ord (RealHandles t)
+                 , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                 )
               => m ~ IO
               => StateMachineTest t m
               -> Maybe Int   -- ^ (Optional) minimum number of commands
