@@ -62,11 +62,14 @@ import qualified Data.Map                             as Map
 import qualified Data.Monoid                          as M
 import           Data.Set
                    (Set)
+import qualified Data.Set                             as Set
 import qualified Data.TreeDiff                        as TD
 import qualified Test.StateMachine.Types              as QSM
 import qualified Test.StateMachine.Types.Rank2        as Rank2
 
+import           Debug.Trace
 import           Test.StateMachine.Lockstep.Auxiliary
+
 {-------------------------------------------------------------------------------
   Test type-level parameters
 -------------------------------------------------------------------------------}
@@ -89,6 +92,11 @@ data family MockHandle  t a :: Type
 
 newtype MockHandles t a = MockHandles { unMH :: Set (MockHandle t a) }
 
+-- | A many-to-many relationship exists between Real and Mock handles (see `Refs`)
+-- As such, an Eq instance based on an intersection is acceptable here
+instance Ord (MockHandle t a) => Eq (MockHandles t a) where
+  (MockHandles mh1) == (MockHandles mh2) = not . Set.null $ Set.intersection mh1 mh2
+
 {-------------------------------------------------------------------------------
   Reference environments
 -------------------------------------------------------------------------------}
@@ -99,7 +107,7 @@ newtype Refs t r a = Refs { unRefs :: Map (Reference a r) (MockHandles t a) }
 
 instance (Ord1 r, Ord a, Ord (MockHandle t a)) => Monoid (Refs t r a) where
   mempty = Refs Map.empty
--- TODO: write semigroup instance
+
 instance (Ord1 r, Ord a, Ord (MockHandle t a)) => Semigroup (Refs t r a) where
   (Refs r1) <> (Refs r2) = Refs $ Map.unionWith
     (\a1 a2 -> MockHandles $ unMH a1 <> unMH a2)
@@ -356,7 +364,6 @@ precondition (Model _ (Refss hs)) (At c) =
     check :: Elem (RealHandles t) a -> FlipRef Symbolic a -> M.All
     check ix (FlipRef a) = M.All $ any ((sameRef a) . fst) (Map.toList $ unRefs (hs `npAt` ix))
 
-    -- TODO: Patch QSM
     sameRef :: Reference a Symbolic -> Reference a Symbolic -> Bool
     sameRef (QSM.Reference (QSM.Symbolic v)) (QSM.Reference (QSM.Symbolic v')) = v == v'
 
