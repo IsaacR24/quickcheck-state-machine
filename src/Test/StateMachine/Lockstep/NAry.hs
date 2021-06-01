@@ -40,6 +40,10 @@ module Test.StateMachine.Lockstep.NAry (
     -- * Running the tests
   , prop_sequential
   , prop_parallel
+  -- * Labeling
+  , LabelEvent
+  , showLabelledExamplesNAry'
+  , showLabelledExamplesNAry
   ) where
 
 import           Data.Functor.Classes
