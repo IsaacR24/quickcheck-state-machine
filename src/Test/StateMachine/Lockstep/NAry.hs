@@ -67,8 +67,9 @@ import qualified Data.TreeDiff                        as TD
 import qualified Test.StateMachine.Types              as QSM
 import qualified Test.StateMachine.Types.Rank2        as Rank2
 
-import           Debug.Trace
+import qualified Test.StateMachine.Labelling          as Label
 import           Test.StateMachine.Lockstep.Auxiliary
+import qualified Test.StateMachine.Sequential         as Seq
 
 {-------------------------------------------------------------------------------
   Test type-level parameters
@@ -212,14 +213,14 @@ instance ( ToExpr (MockState t)
          , All (And ToExpr (Compose ToExpr (MockHandles t))) (RealHandles t)
          ) => ToExpr (Model t Concrete)
 
-initModel :: StateMachineTest t m -> Model t r
+initModel :: StateMachineTest t tag m -> Model t r
 initModel StateMachineTest{..} = Model initMock (Refss (hpure (Refs Map.empty)))
 
 {-------------------------------------------------------------------------------
   High level API
 -------------------------------------------------------------------------------}
 
-data StateMachineTest t m =
+data StateMachineTest t tag m =
     ( Monad m
     -- Requirements on the handles
     , All Typeable                                     (RealHandles t)
@@ -247,9 +248,12 @@ data StateMachineTest t m =
     , generator  :: Model t Symbolic -> Maybe (Gen (Cmd t :@ Symbolic))
     , shrinker   :: Model t Symbolic -> Cmd t :@ Symbolic -> [Cmd t :@ Symbolic]
     , cleanup    :: Model t Concrete -> m ()
+    , tag        :: Show tag => [LabelEvent t] -> [tag]
     }
 
-semantics :: StateMachineTest t m
+type LabelEvent t = Label.Event (Model t) (At (Cmd t)) (At (Resp t)) Symbolic
+
+semantics :: StateMachineTest t tag m
           -> Cmd t :@ Concrete
           -> m (Resp t :@ Concrete)
 semantics StateMachineTest{..} (At c) =
@@ -284,7 +288,7 @@ toMockHandles rss (At fr) =
 step :: ( Ord1 r
         , All Ord (RealHandles t)
         )
-     => StateMachineTest t m
+     => StateMachineTest t tag m
      -> Model t r
      -> Cmd t :@ r
      -> (Resp t (MockHandles t) (RealHandles t), MockState t)
@@ -298,12 +302,12 @@ data Event t r = Event {
     , mockResp :: Resp t (MockHandles t) (RealHandles t)
     }
 
-lockstep :: forall t r m
+lockstep :: forall t r m tag
          . ( Ord1 r
            , All Ord (RealHandles t)
            , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
            )
-         => StateMachineTest t m
+         => StateMachineTest t tag m
          -> Model t    r
          -> Cmd   t :@ r
          -> Resp  t :@ r
@@ -324,7 +328,7 @@ transition :: ( Ord1 r
               , All Ord (RealHandles t)
               , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
               )
-           => StateMachineTest t m
+           => StateMachineTest t tag m
            -> Model t    r
            -> Cmd   t :@ r
            -> Resp  t :@ r
@@ -334,7 +338,7 @@ transition sm m c = after . lockstep sm m c
 postcondition :: ( All Ord (RealHandles t)
                  , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
                  )
-              => StateMachineTest t m
+              => StateMachineTest t tag m
               -> Model t    Concrete
               -> Cmd   t :@ Concrete
               -> Resp  t :@ Concrete
@@ -345,7 +349,7 @@ postcondition sm@StateMachineTest{} m c r =
     e = lockstep sm m c r
 
 symbolicResp :: All Ord (RealHandles t)
-             => StateMachineTest t m
+             => StateMachineTest t tag m
              -> Model t Symbolic
              -> Cmd t :@ Symbolic
              -> GenSym (Resp t :@ Symbolic)
@@ -370,7 +374,7 @@ precondition (Model _ (Refss hs)) (At c) =
 toStateMachine :: ( All Ord (RealHandles t)
                   , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
                   )
-               => StateMachineTest t m
+               => StateMachineTest t tag m
                -> StateMachine (Model t) (At (Cmd t)) m (At (Resp t))
 toStateMachine sm@StateMachineTest{} = StateMachine {
       initModel     = initModel     sm
@@ -385,11 +389,51 @@ toStateMachine sm@StateMachineTest{} = StateMachine {
     , invariant     = Nothing
     }
 
-prop_sequential :: ( All Ord (RealHandles t)
+-- | Show minimal examples for each of the generated tags.
+showLabelledExamplesNAry' :: ( Show tag
+                             , Show (Model t Symbolic)
+                             , Show (At (Cmd t) Symbolic)
+                             , Show (At (Resp t) Symbolic)
+                             , NTraversable (Cmd t)
+                             , NTraversable (Resp t)
+                             , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                             , All Ord (RealHandles t)
+                             )
+                          => StateMachineTest t tag m
+                          -> Maybe Int
+                          -- ^ Seed
+                          -> Int
+                          -- ^ Number of tests to run to find examples
+                          -- -> ([Event model cmd resp Symbolic] -> [tag])
+                          -> (tag -> Bool)
+                          -- ^ Tag filter (can be @const True@)
+                          -> IO ()
+showLabelledExamplesNAry' smt mReplay numTests = Seq.showLabelledExamples'
+  (toStateMachine smt) mReplay numTests (tag smt)
+
+
+showLabelledExamplesNAry :: ( Show tag
+                            , Show (Model t Symbolic)
+                            , Show (At (Cmd t) Symbolic)
+                            , Show (At (Resp t) Symbolic)
+                            , NTraversable (Cmd t)
+                            , NTraversable (Resp t)
+                            , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                            , All Ord (RealHandles t)
+                            )
+                         => StateMachineTest t tag m
+                         -> IO ()
+showLabelledExamplesNAry smt = showLabelledExamplesNAry' smt Nothing 1000 (const True)
+
+
+prop_sequential :: forall t tag m
+                .  ( All Ord (RealHandles t)
                    , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
+                   , CommandNames (At (Cmd t))
+                   , Show tag
                    )
                 => m ~ IO
-                => StateMachineTest t m
+                => StateMachineTest t tag m
                 -> Maybe Int   -- ^ (Optional) minimum number of commands
                 -> Property
 prop_sequential sm@StateMachineTest{} mMinSize =
@@ -397,7 +441,9 @@ prop_sequential sm@StateMachineTest{} mMinSize =
       monadicIO $ do
         (hist, _model, res) <- runCommands sm' cmds
         prettyCommands sm' hist
-          $ res === Ok
+          $ checkCommandNames cmds
+              $ tabulate "Tags" (map show $ tag sm (Label.execCmds sm' cmds))
+              $ res === Ok
   where
     sm' = toStateMachine sm
 
@@ -405,7 +451,7 @@ prop_parallel :: ( All Ord (RealHandles t)
                  , All (And Ord (Compose Ord (MockHandle t))) (RealHandles t)
                  )
               => m ~ IO
-              => StateMachineTest t m
+              => StateMachineTest t tag m
               -> Maybe Int   -- ^ (Optional) minimum number of commands
               -> Property
 prop_parallel sm@StateMachineTest{} mMinSize =
