@@ -215,7 +215,8 @@ instance ToExpr (MockHandle t)
       => ToExpr (NAry.MockHandle (Simple t) (RealHandle t)) where
   toExpr (SimpleToMock h) = toExpr h
 
-fromSimple :: StateMachineTest t -> NAry.StateMachineTest (Simple t) tag IO
+-- TODO: fix fromSimple
+fromSimple :: StateMachineTest t -> NAry.StateMachineTest (Simple t) IO
 fromSimple StateMachineTest{..} = undefined {-NAry.StateMachineTest {
       runMock    = \cmd st -> first respMockFromSimple (runMock (cmdMockToSimple cmd) st)
     , runReal    = \cmd -> respRealFromSimple <$> (runReal (cmdRealToSimple cmd))
