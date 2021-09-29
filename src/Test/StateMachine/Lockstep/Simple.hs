@@ -38,8 +38,6 @@ import           Data.Bifunctor
 import           Data.Functor.Classes
 import           Data.Kind
                    (Type)
-import           Data.Map
-                   (Map)
 import qualified Data.Map                             as Map
 import           Data.SOP
 import qualified Data.Set                             as Set
@@ -87,8 +85,11 @@ data Model t r = Model {
 modelToSimple :: NAry.Model (Simple t) r -> Model t r
 modelToSimple NAry.Model{modelRefss = NAry.Refss (NAry.Refs rs :* Nil), ..} = Model {
       modelState = modelState
-    , modelRefs  = map (second unSimpleToMock) undefined -- rs
+    , modelRefs  = map (second $ unSimpleToMock . toMH) (Map.toList rs)
     }
+    where
+      toMH :: NAry.MockHandles (Simple t) (RealHandle t) -> NAry.MockHandle (Simple t) (RealHandle t)
+      toMH = head . Set.toAscList . NAry.unMH
 
 {-------------------------------------------------------------------------------
   Wrap and unwrap
@@ -149,6 +150,15 @@ data StateMachineTest t =
       -- Mock state
     , Show   (MockState t)
     , ToExpr (MockState t)
+
+    -- new constraints
+    , Ord (NAry.MockHandle (Simple t) (RealHandle t))
+    , Ord (RealHandle t)
+    , ToExpr (NAry.MockHandles (Simple t)  (RealHandle t))
+    , CommandNames (NAry.At (NAry.Cmd (Simple t)))
+    , NAry.Tag (Simple t)
+    , Show (NAry.MockHandles (Simple t) (RealHandle t))
+
     ) => StateMachineTest {
       runMock    :: Cmd t (MockHandle t) -> MockState t -> (Resp t (MockHandle t), MockState t)
     , runReal    :: Cmd t (RealHandle t) -> IO (Resp t (RealHandle t))
@@ -215,28 +225,47 @@ instance ToExpr (MockHandle t)
       => ToExpr (NAry.MockHandle (Simple t) (RealHandle t)) where
   toExpr (SimpleToMock h) = toExpr h
 
--- TODO: fix fromSimple
-fromSimple :: StateMachineTest t -> NAry.StateMachineTest (Simple t) IO
-fromSimple StateMachineTest{..} = undefined {-NAry.StateMachineTest {
+fromSimple
+  :: NAry.Tag (Simple t)
+  => StateMachineTest t
+  -> NAry.StateMachineTest (Simple t) IO
+fromSimple StateMachineTest{..} = NAry.StateMachineTest {
       runMock    = \cmd st -> first respMockFromSimple (runMock (cmdMockToSimple cmd) st)
-    , runReal    = \cmd -> respRealFromSimple <$> (runReal (cmdRealToSimple cmd))
+    , runReal    = \cmd -> respRealFromSimple <$> runReal (cmdRealToSimple cmd)
     , initMock   = initMock
     , newHandles = \r -> Comp (newHandles (unSimpleResp r)) :* Nil
     , generator  = \m     -> fmap cmdAtFromSimple <$> generator (modelToSimple m)
     , shrinker   = \m cmd ->      cmdAtFromSimple <$> shrinker  (modelToSimple m) (cmdAtToSimple cmd)
     , cleanup    = cleanup   . modelToSimple
-    }-}
+    }
 
 {-------------------------------------------------------------------------------
   Running the tests
 -------------------------------------------------------------------------------}
 
-prop_sequential :: StateMachineTest t
+prop_sequential :: ( Ord (NAry.MockHandle (Simple t) (RealHandle t))
+                   , Ord (RealHandle t)
+                   , ToExpr (NAry.MockHandles (Simple t)  (RealHandle t))
+                   , ToExpr (RealHandle t)
+                   , CommandNames (NAry.At (NAry.Cmd (Simple t)))
+                   , NAry.Tag (Simple t)
+                   , Show (NAry.MockHandles (Simple t) (RealHandle t))
+                   , Show (RealHandle t)
+                   , Show tag
+                   )
+                => StateMachineTest t
                 -> Maybe Int   -- ^ (Optional) minimum number of commands
+                -> [(tag, Double)]
                 -> Property
-prop_sequential = undefined -- NAry.prop_sequential . fromSimple
+prop_sequential = NAry.prop_sequential . fromSimple
 
-prop_parallel :: StateMachineTest t
+prop_parallel :: ( Ord (NAry.MockHandle (Simple t) (RealHandle t))
+                 , Ord (RealHandle t)
+                 , NAry.Tag (Simple t)
+                 , Show (NAry.MockHandles (Simple t) (RealHandle t))
+                 , Show (RealHandle t)
+                 )
+              => StateMachineTest t
               -> Maybe Int   -- ^ (Optional) minimum number of commands
               -> Property
-prop_parallel = undefined -- NAry.prop_parallel . fromSimple
+prop_parallel = NAry.prop_parallel . fromSimple
